@@ -129,7 +129,7 @@ class CuraTools:
             "send_to_octoprint": lambda: self.send_to_octoprint(
                 args.get("path"), args.get("confirm", False), args.get("start_print", False)),
             "get_plate_view": lambda: self.get_plate_view(
-                args.get("width", 400), args.get("height", 400)),
+                args.get("width", 400), args.get("height", 400), args.get("focus", True)),
             "rotate_model": lambda: self.rotate_model(
                 args.get("deg_x", 0), args.get("deg_y", 0), args.get("deg_z", 0),
                 args.get("name"), args.get("absolute", False)),
@@ -463,10 +463,37 @@ class CuraTools:
 
     # -- 8. get_plate_view ----------------------------------------------- #
 
-    def get_plate_view(self, width=400, height=400):
+    def get_plate_view(self, width=400, height=400, focus=True):
         width = max(64, min(int(width), 1024))
         height = max(64, min(int(height), 1024))
-        return self.invoker.call(lambda: self._render_plate_view(width, height))
+        # The OpenGL snapshot only renders when Cura's window is actually drawing
+        # frames. If focus=True, bring the window forward and let the render thread
+        # produce a frame (worker-thread sleep keeps the main event loop running),
+        # then snapshot — retrying once if the first render came back empty.
+        attempts = 3 if focus else 1
+        result = None
+        for i in range(attempts):
+            if focus:
+                self.invoker.call(self._focus_window)
+                time.sleep(0.5 + 0.4 * i)  # progressive settle for a cold (deep-background) window
+            result = self.invoker.call(lambda: self._render_plate_view(width, height))
+            if any(b.get("type") == "image" for b in result.get("__mcp_content__", [])):
+                break
+        return result
+
+    def _focus_window(self):
+        from PyQt6.QtQuick import QQuickWindow
+        win = CuraApplication.getInstance().getMainWindow()
+        if win is None:
+            return False
+        try:
+            if win.visibility() in (QQuickWindow.Visibility.Minimized, QQuickWindow.Visibility.Hidden):
+                win.setVisibility(QQuickWindow.Visibility.Windowed)
+            win.raise_()
+            win.requestActivate()
+        except Exception:
+            pass
+        return True
 
     def _render_plate_view(self, width, height):
         """Main thread: render a framed snapshot of the build plate to PNG and
@@ -721,6 +748,8 @@ TOOL_DEFS = [
             "properties": {
                 "width": {"type": "integer", "description": "Image width in px (64-1024, default 400)."},
                 "height": {"type": "integer", "description": "Image height in px (64-1024, default 400)."},
+                "focus": {"type": "boolean", "description": "Bring Cura's window to the front so the "
+                          "OpenGL snapshot renders reliably (default true; set false to avoid stealing focus)."},
             },
         },
     },
