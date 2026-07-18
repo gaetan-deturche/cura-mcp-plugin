@@ -482,17 +482,26 @@ class CuraTools:
         return result
 
     def _focus_window(self):
-        from PyQt6.QtQuick import QQuickWindow
+        # Best-effort nudge so the snapshot is more likely to render: raise the window
+        # and mark the scene dirty. NOTE: Cura throttles its render loop while its
+        # window is not the active/foreground one, so a clean snapshot is only
+        # guaranteed when Cura is focused. We do NOT steal keyboard focus (Windows
+        # blocks that from a background app anyway) and don't fight it further.
         win = CuraApplication.getInstance().getMainWindow()
         if win is None:
             return False
         try:
-            if win.visibility() in (QQuickWindow.Visibility.Minimized, QQuickWindow.Visibility.Hidden):
-                win.setVisibility(QQuickWindow.Visibility.Windowed)
+            win.showNormal()   # harmless if already shown; restores if minimised
             win.raise_()
-            win.requestActivate()
         except Exception:
             pass
+        try:
+            win._onSceneChanged()   # -> _full_render_required = True; self.update()
+        except Exception:
+            try:
+                win.update()
+            except Exception:
+                pass
         return True
 
     def _render_plate_view(self, width, height):
@@ -542,19 +551,26 @@ class CuraTools:
             image = Snapshot.snapshot(width=width, height=height)
         except Exception as exc:  # noqa: BLE001
             Logger.log("w", "Cura MCP: snapshot render failed: %s", exc)
+        b64 = None
+        png_len = 0
         if image is not None:
             ba = QByteArray()
             buf = QBuffer(ba)
             buf.open(QIODevice.OpenModeFlag.WriteOnly)
             image.save(buf, "PNG")
             buf.close()
-            content.append({"type": "image",
-                            "data": bytes(ba.toBase64()).decode("ascii"),
-                            "mimeType": "image/png"})
+            png_len = ba.size()
+            b64 = bytes(ba.toBase64()).decode("ascii")
+        # A throttled/partial render (Cura not the active window) yields a tiny,
+        # near-uniform PNG (a "sliver"). Reject it rather than return a broken image.
+        min_bytes = max(4000, (width * height) // 80)
+        if b64 is not None and png_len >= min_bytes:
+            content.append({"type": "image", "data": b64, "mimeType": "image/png"})
         elif objects:
-            summary["note"] = ("No image: Cura's window must be visible / in the foreground to render "
-                               "an OpenGL snapshot (bring Cura to the front and retry). The layout data "
-                               "above is accurate regardless.")
+            summary["note"] = ("No usable image: Cura throttles its render loop while its window is not "
+                               "the active/foreground one, so the snapshot came back empty or partial. "
+                               "Click Cura to bring it to the front, then retry. The layout data above "
+                               "is accurate regardless.")
         else:
             summary["note"] = "No image: the build plate is empty."
         content.append({"type": "text",
