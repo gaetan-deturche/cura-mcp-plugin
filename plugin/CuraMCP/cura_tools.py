@@ -134,6 +134,7 @@ class CuraTools:
                 args.get("deg_x", 0), args.get("deg_y", 0), args.get("deg_z", 0),
                 args.get("name"), args.get("absolute", False)),
             "reset_orientation": lambda: self.reset_orientation(args.get("name")),
+            "lay_flat": lambda: self.lay_flat(args.get("name")),
             "arrange_all": lambda: self.arrange_all(),
             "set_camera": lambda: self.set_camera(args.get("view", "iso"), args.get("zoom", 1.0)),
         }.get(name)
@@ -646,6 +647,26 @@ class CuraTools:
         return {"arranged": ok,
                 "note": "" if ok else "could not fit all objects within the build volume"}
 
+    def lay_flat(self, name=None):
+        """Rotate the model(s) so a flat face rests fully on the plate (fixes a model
+        left resting on an edge/point after rotation). Uses Cura's lay-flat heuristic
+        (levels the lowest vertices), then lets it drop onto the plate."""
+        def work():
+            from UM.Operations.LayFlatOperation import LayFlatOperation
+            nodes = self._target_nodes(name)
+            if not nodes:
+                raise RuntimeError("No model on the plate to lay flat")
+            done = []
+            for node in nodes:
+                if node.getMeshData() is None:
+                    continue
+                LayFlatOperation(node).process()   # rotates node so its lowest face is level
+                done.append(node.getName() or "model")
+            return done
+        names = self.invoker.call(work, timeout=180)  # scans all vertices; big meshes are slower
+        time.sleep(0.5)  # let PlatformPhysics seat it on the plate
+        return {"laid_flat": names}
+
     CAMERA_PRESETS = {
         "iso": ("3d", 0), "3d": ("3d", 0),
         "front": ("home", 0), "home": ("home", 0),
@@ -808,6 +829,16 @@ TOOL_DEFS = [
     {
         "name": "reset_orientation",
         "description": "Reset model orientation to its loaded (identity) rotation. Optional 'name'.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"name": {"type": "string", "description": "Target object name; omit for all."}},
+        },
+    },
+    {
+        "name": "lay_flat",
+        "description": "Rotate the model so a flat face rests fully on the plate (fixes a model left "
+                       "sitting on an edge/point after rotation, which would print with a gap). "
+                       "Optional 'name' targets one object.",
         "inputSchema": {
             "type": "object",
             "properties": {"name": {"type": "string", "description": "Target object name; omit for all."}},

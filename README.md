@@ -41,7 +41,7 @@ Tools appear in the client as `mcp__mcp-proxy__cura__<tool>`.
 
 ## Security model (the point of this project)
 
-- **No arbitrary code / command execution.** The plugin exposes a fixed set of 12
+- **No arbitrary code / command execution.** The plugin exposes a fixed set of 13
   tools and nothing else. There is no Python `exec`, no shell, no generic file
   read/write.
 - **Localhost only.** The HTTP server binds strictly to `127.0.0.1`. It also
@@ -70,6 +70,7 @@ Tools appear in the client as `mcp__mcp-proxy__cura__<tool>`.
 | `send_to_octoprint` | Upload g-code to OctoPrint | network upload — `confirm=true` |
 | `rotate_model` | Rotate model(s) around X/Y/Z (auto-drops to plate) | none |
 | `reset_orientation` | Reset model rotation to loaded state | none |
+| `lay_flat` | Rotate model so a flat face rests fully on the plate | none |
 | `arrange_all` | Auto-arrange all models on the plate | none |
 | `set_camera` | Point Cura's 3D view at a preset (iso/front/…) and zoom to the model | none |
 | `get_plate_view` | PNG snapshot of the build-plate layout + per-object size/position/fit | none |
