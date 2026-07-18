@@ -491,8 +491,7 @@ class CuraTools:
         if win is None:
             return False
         try:
-            win.showNormal()   # harmless if already shown; restores if minimised
-            win.raise_()
+            win.raise_()   # bring forward WITHOUT changing maximised/minimised state
         except Exception:
             pass
         try:
@@ -547,6 +546,10 @@ class CuraTools:
 
         content = []
         image = None
+        # NB: forcing the camera matrix (Snapshot.isometricSnapshot) does NOT help when
+        # Cura is unfocused — the bottleneck is the absent current OpenGL context while
+        # the window's render loop is throttled, not the camera framing. So we use the
+        # standard snapshot(), which renders fine once Cura is the active window.
         try:
             image = Snapshot.snapshot(width=width, height=height)
         except Exception as exc:  # noqa: BLE001
