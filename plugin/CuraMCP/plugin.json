@@ -1,0 +1,9 @@
+{
+    "name": "Cura MCP",
+    "author": "gaetan.deturche",
+    "version": "1.0.0",
+    "api": 8,
+    "supported_sdk_versions": [8],
+    "description": "Minimal, localhost-only MCP downstream server exposing a narrow, safe set of Cura controls (list/read/set settings, load model, slice, export g-code, send to OctoPrint). No arbitrary code execution.",
+    "catalog": "cura"
+}

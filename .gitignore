@@ -1,0 +1,12 @@
+# Local plugin config — may hold the OctoPrint API key. Never commit.
+config.json
+plugin/CuraMCP/config.json
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Proxy runtime files (belong with the mcp-proxy install, not here)
+downstreams.json
+mcp-proxy.log
+oauth-tokens.json

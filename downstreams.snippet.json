@@ -1,0 +1,6 @@
+{
+  "callTimeoutSeconds": 300,
+  "downstreams": [
+    { "name": "cura", "transport": "http", "url": "http://127.0.0.1:8974/mcp" }
+  ]
+}
