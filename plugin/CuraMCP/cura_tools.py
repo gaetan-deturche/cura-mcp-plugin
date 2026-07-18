@@ -130,6 +130,11 @@ class CuraTools:
                 args.get("path"), args.get("confirm", False), args.get("start_print", False)),
             "get_plate_view": lambda: self.get_plate_view(
                 args.get("width", 400), args.get("height", 400)),
+            "rotate_model": lambda: self.rotate_model(
+                args.get("deg_x", 0), args.get("deg_y", 0), args.get("deg_z", 0),
+                args.get("name"), args.get("absolute", False)),
+            "reset_orientation": lambda: self.reset_orientation(args.get("name")),
+            "arrange_all": lambda: self.arrange_all(),
         }.get(name)
         if handler is None:
             raise ValueError("Unknown tool: %s" % name)
@@ -519,11 +524,80 @@ class CuraTools:
             content.append({"type": "image",
                             "data": bytes(ba.toBase64()).decode("ascii"),
                             "mimeType": "image/png"})
+        elif objects:
+            summary["note"] = ("No image: Cura's window must be visible / in the foreground to render "
+                               "an OpenGL snapshot (bring Cura to the front and retry). The layout data "
+                               "above is accurate regardless.")
         else:
-            summary["note"] = "No image rendered (empty build plate, or renderer unavailable)."
+            summary["note"] = "No image: the build plate is empty."
         content.append({"type": "text",
                         "text": json.dumps(summary, ensure_ascii=False, indent=2)})
         return {"__mcp_content__": content}
+
+    # -- 9-11. placement / orientation ----------------------------------- #
+
+    def _target_nodes(self, name=None):
+        from UM.Scene.Iterator.DepthFirstIterator import DepthFirstIterator
+        scene = CuraApplication.getInstance().getController().getScene()
+        nodes = [n for n in DepthFirstIterator(scene.getRoot()) if n.callDecoration("isSliceable")]
+        if name:
+            nodes = [n for n in nodes if (n.getName() or "") == name]
+        return nodes
+
+    def rotate_model(self, deg_x=0, deg_y=0, deg_z=0, name=None, absolute=False):
+        """Rotate the model(s) by the given degrees around each world axis.
+        absolute=True resets orientation first (so the angles are absolute)."""
+        def work():
+            import math as _m
+            from UM.Math.Quaternion import Quaternion
+            from UM.Math.Vector import Vector
+            from UM.Scene.SceneNode import SceneNode
+            nodes = self._target_nodes(name)
+            if not nodes:
+                raise RuntimeError("No model on the plate to rotate")
+            done = []
+            for node in nodes:
+                if absolute:
+                    node.setOrientation(Quaternion(), SceneNode.TransformSpace.World)
+                for deg, axis in ((deg_x, Vector.Unit_X), (deg_y, Vector.Unit_Y), (deg_z, Vector.Unit_Z)):
+                    if deg:
+                        node.rotate(Quaternion.fromAngleAxis(_m.radians(float(deg)), axis),
+                                    SceneNode.TransformSpace.World)
+                done.append(node.getName() or "model")
+            return done
+        names = self.invoker.call(work)
+        time.sleep(0.4)  # let PlatformPhysics drop the model back onto the plate
+        return {"rotated": names, "applied_deg": {"x": deg_x, "y": deg_y, "z": deg_z},
+                "absolute": bool(absolute)}
+
+    def reset_orientation(self, name=None):
+        def work():
+            from UM.Math.Quaternion import Quaternion
+            from UM.Scene.SceneNode import SceneNode
+            nodes = self._target_nodes(name)
+            if not nodes:
+                raise RuntimeError("No model on the plate")
+            for node in nodes:
+                node.setOrientation(Quaternion(), SceneNode.TransformSpace.World)
+            return [n.getName() or "model" for n in nodes]
+        r = self.invoker.call(work)
+        time.sleep(0.4)
+        return {"reset": r}
+
+    def arrange_all(self):
+        """Auto-arrange every model on the plate (Cura's nesting algorithm)."""
+        def work():
+            from cura.Arranging.Nest2DArrange import Nest2DArrange
+            app = CuraApplication.getInstance()
+            nodes = self._target_nodes()
+            if not nodes:
+                raise RuntimeError("No models to arrange")
+            ok = Nest2DArrange(nodes, app.getBuildVolume(), [], factor=1000).arrange()
+            return bool(ok)
+        ok = self.invoker.call(work)
+        time.sleep(0.3)
+        return {"arranged": ok,
+                "note": "" if ok else "could not fit all objects within the build volume"}
 
 
 # --------------------------------------------------------------------------- #
@@ -606,6 +680,36 @@ TOOL_DEFS = [
             },
             "required": ["confirm"],
         },
+    },
+    {
+        "name": "rotate_model",
+        "description": "Rotate the model(s) on the plate by degrees around each axis (Z is vertical). "
+                       "The model auto-drops back onto the plate. Pass absolute=true to reset "
+                       "orientation before applying the angles. Optional 'name' targets one object.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "deg_x": {"type": "number", "description": "Rotation around X (tilt front/back), degrees."},
+                "deg_y": {"type": "number", "description": "Rotation around Y (tilt left/right), degrees."},
+                "deg_z": {"type": "number", "description": "Rotation around Z (spin on the plate), degrees."},
+                "absolute": {"type": "boolean", "description": "Reset orientation first (default false)."},
+                "name": {"type": "string", "description": "Target object name; omit for all."},
+            },
+        },
+    },
+    {
+        "name": "reset_orientation",
+        "description": "Reset model orientation to its loaded (identity) rotation. Optional 'name'.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"name": {"type": "string", "description": "Target object name; omit for all."}},
+        },
+    },
+    {
+        "name": "arrange_all",
+        "description": "Auto-arrange all models on the build plate (Cura's nesting), spacing them "
+                       "out and placing them within the printable area.",
+        "inputSchema": {"type": "object", "properties": {}},
     },
     {
         "name": "get_plate_view",
