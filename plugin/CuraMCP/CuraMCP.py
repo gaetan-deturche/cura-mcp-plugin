@@ -122,12 +122,15 @@ class CuraMCP(Extension):
 
     @staticmethod
     def _notify(text, error=False):
+        # Auto-dismissing toast: an absolute lifetime (use_inactivity_timer=False so
+        # the countdown isn't reset by ongoing activity) means no manual dismiss.
         Logger.log("e" if error else "i", "Cura MCP: %s", text)
+        lifetime = 12 if error else 6
         try:
-            Message(text, title="Cura MCP",
+            Message(text, title="Cura MCP", lifetime=lifetime, use_inactivity_timer=False,
                     message_type=Message.MessageType.ERROR if error else Message.MessageType.POSITIVE).show()
         except Exception:
             try:
-                Message(text, title="Cura MCP").show()
+                Message(text, title="Cura MCP", lifetime=lifetime, use_inactivity_timer=False).show()
             except Exception:
                 pass
