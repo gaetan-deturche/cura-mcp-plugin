@@ -135,6 +135,7 @@ class CuraTools:
                 args.get("name"), args.get("absolute", False)),
             "reset_orientation": lambda: self.reset_orientation(args.get("name")),
             "arrange_all": lambda: self.arrange_all(),
+            "set_camera": lambda: self.set_camera(args.get("view", "iso"), args.get("zoom", 1.0)),
         }.get(name)
         if handler is None:
             raise ValueError("Unknown tool: %s" % name)
@@ -645,6 +646,67 @@ class CuraTools:
         return {"arranged": ok,
                 "note": "" if ok else "could not fit all objects within the build volume"}
 
+    CAMERA_PRESETS = {
+        "iso": ("3d", 0), "3d": ("3d", 0),
+        "front": ("home", 0), "home": ("home", 0),
+        "back": ("x", 180),
+        "left": ("x", 90),
+        "right": ("x", 270),
+        "top": ("y", 90),
+        "bottom": ("y", 270),
+    }
+
+    def set_camera(self, view="iso", zoom=1.0):
+        """Set Cura's 3D view to a standard preset and zoom to frame the model.
+
+        The preset (via setCameraRotation) fixes the orientation + up vector; then the
+        camera is moved to a distance that frames the object's bounding box for Cura's
+        30° perspective FOV (zoom>1 = closer, <1 = further). Falls back to Cura's default
+        plate framing if there is no model on the plate."""
+        view = (view or "iso").lower()
+        if view not in self.CAMERA_PRESETS:
+            raise ValueError("Unknown view '%s'. Options: %s"
+                             % (view, ", ".join(sorted(self.CAMERA_PRESETS))))
+        coord, angle = self.CAMERA_PRESETS[view]
+        zoom = max(0.1, min(float(zoom), 10.0))
+
+        def work():
+            import math as _m
+            from UM.Math.Vector import Vector
+            from UM.Scene.Iterator.DepthFirstIterator import DepthFirstIterator
+            app = CuraApplication.getInstance()
+            ctrl = app.getController()
+            scene = ctrl.getScene()
+            ctrl.setCameraRotation(coord, angle)   # orientation + up + default plate framing
+            cam = scene.getActiveCamera()
+            if cam is None:
+                return {"view": view, "zoomed": False}
+            bb = None
+            for node in DepthFirstIterator(scene.getRoot()):
+                if node.callDecoration("isSliceable"):
+                    bb = node.getBoundingBox() if bb is None else bb + node.getBoundingBox()
+            if bb is None:
+                return {"view": view, "zoomed": False, "note": "no model on the plate; showing build plate"}
+            center = bb.center
+            size = max(bb.width, bb.height, bb.depth)
+            # Keep the preset's orientation, just move along the current view axis to a
+            # distance that frames 'size' at the 30° vertical FOV (half-angle 15°).
+            offset = cam.getPosition() - center
+            if offset.length() < 1e-3:
+                offset = Vector(-1.0, 0.8, 0.9)
+            dist = (size * 0.5) / _m.tan(_m.radians(15.0)) * 1.5 / zoom
+            cam.setPosition(center + offset.normalized() * dist)
+            try:
+                ct = ctrl.getTool("CameraTool")
+                if ct is not None:
+                    ct.setOrigin(center)   # pivot subsequent interaction on the object
+            except Exception:
+                pass
+            return {"view": view, "zoomed": True, "zoom": zoom,
+                    "object_size_mm": round(size, 1),
+                    "camera_distance_mm": round(dist, 1)}
+        return self.invoker.call(work)
+
 
 # --------------------------------------------------------------------------- #
 # MCP tool schema advertised to the client (via the proxy).
@@ -756,6 +818,23 @@ TOOL_DEFS = [
         "description": "Auto-arrange all models on the build plate (Cura's nesting), spacing them "
                        "out and placing them within the printable area.",
         "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "set_camera",
+        "description": "Point Cura's 3D view at a standard preset angle (iso, front, back, left, "
+                       "right, top, bottom) and zoom to frame the model on the plate. Useful before "
+                       "capturing the Cura window so the model is shown from a known viewpoint.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "view": {"type": "string",
+                         "enum": ["iso", "front", "back", "left", "right", "top", "bottom"],
+                         "description": "Preset viewpoint (default iso)."},
+                "zoom": {"type": "number",
+                         "description": "Zoom on the model: 1.0 frames it with margin (default), "
+                                        ">1 closer, <1 further."},
+            },
+        },
     },
     {
         "name": "get_plate_view",

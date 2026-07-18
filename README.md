@@ -41,7 +41,7 @@ Tools appear in the client as `mcp__mcp-proxy__cura__<tool>`.
 
 ## Security model (the point of this project)
 
-- **No arbitrary code / command execution.** The plugin exposes a fixed set of 8
+- **No arbitrary code / command execution.** The plugin exposes a fixed set of 12
   tools and nothing else. There is no Python `exec`, no shell, no generic file
   read/write.
 - **Localhost only.** The HTTP server binds strictly to `127.0.0.1`. It also
@@ -68,7 +68,17 @@ Tools appear in the client as `mcp__mcp-proxy__cura__<tool>`.
 | `slice` | Slice; returns estimated time + material | none |
 | `export_gcode` | Write `.gcode` (active machine's post-processing applied) | writes a file — `confirm=true` |
 | `send_to_octoprint` | Upload g-code to OctoPrint | network upload — `confirm=true` |
+| `rotate_model` | Rotate model(s) around X/Y/Z (auto-drops to plate) | none |
+| `reset_orientation` | Reset model rotation to loaded state | none |
+| `arrange_all` | Auto-arrange all models on the plate | none |
+| `set_camera` | Point Cura's 3D view at a preset (iso/front/…) and zoom to the model | none |
 | `get_plate_view` | PNG snapshot of the build-plate layout + per-object size/position/fit | none |
+
+> **Reliable screenshots:** `get_plate_view`'s OpenGL snapshot only renders when
+> Cura is the active/foreground window (Cura throttles its render loop otherwise).
+> For a screenshot that works even when Cura is occluded/unfocused, pair this plugin
+> with [winstream](https://github.com/gaetan-deturche/winstream) (Windows Graphics
+> Capture) as a second proxy downstream, and use `set_camera` to frame the view.
 
 ---
 
