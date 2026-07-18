@@ -166,6 +166,24 @@ proxy, isolates the plugin) or go through the proxy with the `cura__` prefix:
 
 ---
 
+## Hot-reloading the tools (development)
+
+Editing tool logic normally means restarting Cura (plugins load at startup). To
+iterate faster, the plugin exposes a maintenance tool **`reload_plugin`** (and an
+**Extensions → Cura MCP → "Reload tools (no restart)"** menu item) that
+re-imports `cura_tools.py` and swaps the live tool table + dispatch — no restart.
+
+Workflow after editing `cura_tools.py` (adding/changing/removing a tool):
+
+1. copy the file to the installed plugin dir,
+2. call `reload_plugin` (via the client or the menu),
+3. if the *set* of tools changed, call the proxy's `reload` so the client re-fetches the list.
+
+Scope: `reload_plugin` covers **`cura_tools.py`** (where the tools live). Changes
+to `CuraMCP.py` (lifecycle/config) or `mcp_http.py` (transport) still need a Cura
+restart. Image/other content already passes through generically, so new
+image-returning tools do **not** require a transport change.
+
 ## Files
 
 ```

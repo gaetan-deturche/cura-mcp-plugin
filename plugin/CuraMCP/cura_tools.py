@@ -9,6 +9,7 @@
 # load a model, slice, export g-code, upload to OctoPrint. No arbitrary code,
 # no filesystem access beyond the paths a tool is explicitly given.
 
+import json
 import os
 import threading
 import time
@@ -94,6 +95,25 @@ class CuraTools:
         self._slice_error = [None]
         self._last_times = {}
         self._last_material = []
+
+    def teardown(self):
+        """Disconnect backend signal hooks so this instance can be discarded on a
+        hot-reload without leaving duplicate slice callbacks connected."""
+        if not self._hooks_ready:
+            return
+
+        def undo():
+            backend = CuraApplication.getInstance().getBackend()
+            for sig, handler in ((backend.printDurationMessage, self._on_duration),
+                                 (backend.backendStateChange, self._on_state)):
+                try:
+                    sig.disconnect(handler)
+                except Exception:
+                    pass
+        try:
+            self.invoker.call(undo)
+        except Exception:
+            pass
 
     # -- dispatch -------------------------------------------------------- #
 
@@ -455,8 +475,8 @@ class CuraTools:
 
         app = CuraApplication.getInstance()
         gs = app.getGlobalContainerStack()
-        plate_w = gs.getProperty("machine_width", "value") if gs else None
-        plate_d = gs.getProperty("machine_depth", "value") if gs else None
+        plate_w = float(gs.getProperty("machine_width", "value")) if gs else None
+        plate_d = float(gs.getProperty("machine_depth", "value")) if gs else None
 
         objects = []
         scene = app.getController().getScene()
@@ -473,7 +493,7 @@ class CuraTools:
                 item["bottom_z_mm"] = round(bb.bottom, 1)
                 if plate_w and plate_d:
                     m = 0.01
-                    item["within_plate"] = (
+                    item["within_plate"] = bool(
                         bb.minimum.x >= -plate_w / 2 - m and bb.maximum.x <= plate_w / 2 + m
                         and bb.minimum.z >= -plate_d / 2 - m and bb.maximum.z <= plate_d / 2 + m)
             objects.append(item)

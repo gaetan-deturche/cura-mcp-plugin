@@ -19,6 +19,17 @@ from UM.Logger import Logger
 
 PROTOCOL_VERSION = "2025-03-26"
 
+# Built-in maintenance tool, exposed only when the server is given a reload
+# callback. Hot-reloads the plugin's tool code (cura_tools.py) without restarting
+# Cura — handy while iterating on the tools.
+RELOAD_TOOL_DEF = {
+    "name": "reload_plugin",
+    "description": "Hot-reload the Cura MCP tool code (cura_tools.py) from disk without "
+                   "restarting Cura. Use after editing the plugin's tool logic. If the set of "
+                   "tools changed, also call the proxy's 'reload' so the client re-fetches them.",
+    "inputSchema": {"type": "object", "properties": {}},
+}
+
 
 class _Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -117,12 +128,22 @@ class _Handler(BaseHTTPRequestHandler):
             return self._result(rid, {})
 
         if method == "tools/list":
-            return self._result(rid, {"tools": self.server.tool_defs})
+            defs = list(self.server.tool_defs)
+            if getattr(self.server, "reload_cb", None):
+                defs.append(RELOAD_TOOL_DEF)
+            return self._result(rid, {"tools": defs})
 
         if method == "tools/call":
             params = msg.get("params") or {}
             name = params.get("name")
             arguments = params.get("arguments") or {}
+            if name == "reload_plugin" and getattr(self.server, "reload_cb", None):
+                try:
+                    text = str(self.server.reload_cb())
+                    return self._result(rid, {"content": [{"type": "text", "text": text}], "isError": False})
+                except Exception as exc:  # noqa: BLE001
+                    return self._result(rid, {"content": [{"type": "text", "text": "reload failed: %s" % exc}],
+                                              "isError": True})
             try:
                 data = self.server.dispatch(name, arguments)
                 if isinstance(data, dict) and "__mcp_content__" in data:
@@ -141,14 +162,22 @@ class _Handler(BaseHTTPRequestHandler):
 class MCPServer:
     """Owns the ThreadingHTTPServer and its background thread."""
 
-    def __init__(self, host, port, tool_defs, dispatch, token=None):
+    def __init__(self, host, port, tool_defs, dispatch, token=None, reload_cb=None):
         self.host = host
         self.port = port
         self._httpd = ThreadingHTTPServer((host, port), _Handler)
         self._httpd.tool_defs = tool_defs
         self._httpd.dispatch = dispatch
         self._httpd.token = token or None
+        self._httpd.reload_cb = reload_cb
         self._thread = None
+
+    def update(self, tool_defs=None, dispatch=None):
+        """Swap the live tool table / dispatch (used by a hot-reload)."""
+        if tool_defs is not None:
+            self._httpd.tool_defs = tool_defs
+        if dispatch is not None:
+            self._httpd.dispatch = dispatch
 
     @property
     def url(self):

@@ -5,6 +5,7 @@
 # 'http' downstream. No arbitrary code execution; no outbound connections except
 # the explicit, confirm-gated OctoPrint upload.
 
+import importlib
 import json
 import os
 
@@ -12,7 +13,8 @@ from UM.Extension import Extension
 from UM.Logger import Logger
 from UM.Message import Message
 
-from .cura_tools import CuraTools, MainThreadInvoker, TOOL_DEFS
+from . import cura_tools               # module ref so it can be importlib.reload()'d
+from .cura_tools import MainThreadInvoker
 from .mcp_http import MCPServer
 
 DEFAULT_CONFIG = {
@@ -33,12 +35,13 @@ class CuraMCP(Extension):
         self._plugin_dir = os.path.dirname(os.path.abspath(__file__))
         self._config = self._load_config()
         self._invoker = MainThreadInvoker()          # created on the Qt main thread
-        self._tools = CuraTools(self._invoker, self._config)
+        self._tools = cura_tools.CuraTools(self._invoker, self._config)
         self._server = None
 
         self.addMenuItem("Start server", self.start)
         self.addMenuItem("Stop server", self.stop)
         self.addMenuItem("Show status / URL", self.show_status)
+        self.addMenuItem("Reload tools (no restart)", self.reload_tools)
 
         if self._config.get("autostart", True):
             self.start()
@@ -66,9 +69,10 @@ class CuraMCP(Extension):
             self._server = MCPServer(
                 host=self._config["host"],
                 port=int(self._config["port"]),
-                tool_defs=TOOL_DEFS,
+                tool_defs=cura_tools.TOOL_DEFS,
                 dispatch=self._tools.dispatch,
                 token=self._config.get("token") or None,
+                reload_cb=self.reload_tools,
             )
             self._server.start()
             self._notify("Cura MCP server started at %s" % self._server.url)
@@ -84,6 +88,28 @@ class CuraMCP(Extension):
         self._server.stop()
         self._server = None
         self._notify("Cura MCP server stopped")
+
+    def reload_tools(self):
+        """Hot-reload cura_tools.py and swap the live tool table + dispatch, without
+        restarting Cura. Only reloads the tool code — changes to CuraMCP.py or
+        mcp_http.py still need a Cura restart. Reloads config.json too."""
+        try:
+            self._config = self._load_config()
+            importlib.reload(cura_tools)
+            old = self._tools
+            new_tools = cura_tools.CuraTools(self._invoker, self._config)
+            if old is not None:
+                old.teardown()
+            self._tools = new_tools
+            if self._server is not None:
+                self._server.update(tool_defs=cura_tools.TOOL_DEFS, dispatch=new_tools.dispatch)
+            msg = "Reloaded %d tools without restart" % len(cura_tools.TOOL_DEFS)
+            self._notify("Cura MCP: %s" % msg)
+            return msg
+        except Exception as exc:  # noqa: BLE001
+            Logger.logException("e", "Cura MCP: reload_tools failed")
+            self._notify("Cura MCP reload failed: %s" % exc, error=True)
+            return "reload failed: %s" % exc
 
     def show_status(self):
         if self._server is None:
